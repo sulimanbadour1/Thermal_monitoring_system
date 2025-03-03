@@ -111,7 +111,7 @@ def main():
     writer = csv.writer(csvfile)
     header = ["Photo", "Timestamp"]
     for i in range(5):
-        header.append(f"Estimated Temperature Point {i+1} (°)")
+        header.append(f"Estimated Temperature Point {i+1} (C)")
     writer.writerow(header)
 
     # Setup camera. Change camera_index if needed.
