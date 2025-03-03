@@ -1,0 +1,132 @@
+import cv2
+import numpy as np
+import csv
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+
+
+def main():
+    # -------------------------------------------------------------------------
+    # 1) LOAD AND CROP THE THERMAL IMAGE (same approach as before)
+    # -------------------------------------------------------------------------
+    image_path = r"E:\Novak_part_time_job\Thermal\photos\image_000.png"
+    image = cv2.imread(image_path)
+    if image is None:
+        print(f"ERROR: Could not read image from {image_path}")
+        return
+
+    # Coordinates for the scale bar (example)
+    x1, y1 = 306, 36
+    x2, y2 = 315, 211
+    cropped_scale = image[y1:y2, x1:x2]
+
+    # -------------------------------------------------------------------------
+    # 2) ASK USER FOR MIN/MAX TEMPERATURE AND BUILD color_temp_map
+    # -------------------------------------------------------------------------
+    min_temp = float(input("Enter the MIN temperature on the scale: "))
+    max_temp = float(input("Enter the MAX temperature on the scale: "))
+
+    scale_height, scale_width, _ = cropped_scale.shape
+    color_temp_map = []  # will hold (temperature, [B, G, R])
+
+    for row_index in range(scale_height):
+        row_pixels = cropped_scale[row_index, :, :]
+        avg_bgr = np.mean(row_pixels, axis=0).tolist()  # [B, G, R]
+
+        # Interpolate temperature from top = max_temp to bottom = min_temp
+        fraction = row_index / (scale_height - 1) if scale_height > 1 else 0
+        row_temp = max_temp - fraction * (max_temp - min_temp)
+
+        color_temp_map.append((row_temp, avg_bgr))
+
+    # -------------------------------------------------------------------------
+    # 3) CREATE A CUSTOM MATPLOTLIB COLORMAP FROM color_temp_map
+    # -------------------------------------------------------------------------
+    # Sort by ascending temperature
+    color_temp_map.sort(key=lambda x: x[0])  # sorts by temperature ascending
+
+    # Extract separate lists for temperature and BGR values
+    temps = [item[0] for item in color_temp_map]
+    bgrs = [item[1] for item in color_temp_map]
+
+    # Normalize temperature range to [0, 1]
+    tmin, tmax = min(temps), max(temps)
+    temp_norm = [(t - tmin) / (tmax - tmin) if (tmax - tmin) != 0 else 0 for t in temps]
+
+    # Convert BGR to normalized RGB (for Matplotlib)
+    rgbs = []
+    for bgr in bgrs:
+        b, g, r = bgr
+        r_norm = r / 255.0
+        g_norm = g / 255.0
+        b_norm = b / 255.0
+        rgbs.append((r_norm, g_norm, b_norm))
+
+    # Build a list of (normalized_temp, (r, g, b)) for the colormap
+    cdict = list(zip(temp_norm, rgbs))
+
+    # Create the custom colormap using the list of (position, color)
+    custom_cmap = mcolors.LinearSegmentedColormap.from_list("thermal_cmap", cdict)
+
+    # -------------------------------------------------------------------------
+    # 4) VISUALIZE THE CUSTOM COLORMAP
+    # -------------------------------------------------------------------------
+    gradient = np.linspace(0, 1, 256)
+    gradient = np.vstack((gradient, gradient))  # shape: (2, 256)
+
+    plt.figure(figsize=(6, 2))
+    plt.imshow(gradient, aspect="auto", cmap=custom_cmap)
+    plt.title("Custom Thermal Colormap")
+    plt.colorbar(label="Normalized Temperature")
+    plt.show()
+
+    # -------------------------------------------------------------------------
+    # 5) (OPTIONAL) SAVE TO CSV
+    # -------------------------------------------------------------------------
+    csv_filename = "color_temp_map.csv"
+    with open(csv_filename, "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["RowIndex", "Temperature", "B", "G", "R"])
+        for row_index, (temp, bgr) in enumerate(color_temp_map):
+            b, g, r = bgr
+            writer.writerow(
+                [row_index, f"{temp:.2f}", f"{b:.2f}", f"{g:.2f}", f"{r:.2f}"]
+            )
+    print(f"Saved row-based color map to '{csv_filename}'.")
+
+    # -------------------------------------------------------------------------
+    # 6) EXTRACT TEMPERATURE AT A DEFINED POINT
+    # -------------------------------------------------------------------------
+    # Ask the user to input coordinates of the target point in the full image.
+    x_target = int(input("Enter the x-coordinate of the point: "))
+    y_target = int(input("Enter the y-coordinate of the point: "))
+
+    # Get the color at that point (BGR)
+    target_color = image[y_target, x_target, :]
+    b, g, r = target_color
+    # Convert the target color from BGR to normalized RGB
+    target_rgb = (r / 255.0, g / 255.0, b / 255.0)
+
+    # Compare the target_rgb with each row in the color_temp_map.
+    # We use Euclidean distance in RGB space to determine the closest match.
+    min_distance = float("inf")
+    estimated_temp = None
+    for temp, bgr in color_temp_map:
+        tb, tg, tr = bgr
+        row_rgb = (tr / 255.0, tg / 255.0, tb / 255.0)
+        distance = np.sqrt(
+            (target_rgb[0] - row_rgb[0]) ** 2
+            + (target_rgb[1] - row_rgb[1]) ** 2
+            + (target_rgb[2] - row_rgb[2]) ** 2
+        )
+        if distance < min_distance:
+            min_distance = distance
+            estimated_temp = temp
+
+    print(
+        f"Estimated temperature at point ({x_target}, {y_target}) is approximately {estimated_temp:.2f} degrees."
+    )
+
+
+if __name__ == "__main__":
+    main()
