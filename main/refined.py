@@ -6,21 +6,36 @@ import time
 from datetime import datetime
 
 
+def bgr_to_rgb(color):
+    """Convert a BGR tuple to normalized RGB tuple."""
+    b, g, r = color
+    return (r / 255.0, g / 255.0, b / 255.0)
+
+
 def extract_color_temp_map(image, min_temp, max_temp, x1=306, y1=36, x2=315, y2=211):
     """
     Extract the color-to-temperature mapping from the scale bar region.
     Coordinates (x1, y1) to (x2, y2) should cover the vertical temperature scale.
     """
+    # Ensure the crop coordinates are within the image bounds.
+    height, width, _ = image.shape
+    if x1 < 0 or x2 > width or y1 < 0 or y2 > height:
+        raise ValueError("Scale bar coordinates are out of image bounds.")
+
     cropped_scale = image[y1:y2, x1:x2]
     scale_height, scale_width, _ = cropped_scale.shape
     color_temp_map = []
+
     for row_index in range(scale_height):
         row_pixels = cropped_scale[row_index, :, :]
-        avg_bgr = np.mean(row_pixels, axis=0).tolist()  # Average BGR values
+        # Average over the width for this row.
+        avg_bgr = np.mean(row_pixels, axis=0).tolist()
         fraction = row_index / (scale_height - 1) if scale_height > 1 else 0
         # Interpolate temperature from top (max_temp) to bottom (min_temp)
         row_temp = max_temp - fraction * (max_temp - min_temp)
         color_temp_map.append((row_temp, avg_bgr))
+
+    # Sort the mapping by temperature (ascending order)
     color_temp_map.sort(key=lambda x: x[0])
     return color_temp_map
 
@@ -30,15 +45,18 @@ def estimate_temperature(image, color_temp_map, x_target, y_target):
     Estimate the temperature at the specified (x, y) point.
     Compares the target pixel's normalized RGB to each row's color in the scale.
     """
+    height, width, _ = image.shape
+    if not (0 <= x_target < width and 0 <= y_target < height):
+        raise ValueError("Target coordinates are out of image bounds.")
+
     target_color = image[y_target, x_target, :]
-    b, g, r = target_color
-    target_rgb = (r / 255.0, g / 255.0, b / 255.0)
+    target_rgb = bgr_to_rgb(target_color)
 
     min_distance = float("inf")
     estimated_temp = None
     for temp, bgr in color_temp_map:
-        tb, tg, tr = bgr
-        row_rgb = (tr / 255.0, tg / 255.0, tb / 255.0)
+        row_rgb = bgr_to_rgb(bgr)
+        # Euclidean distance in RGB space.
         distance = np.sqrt(
             (target_rgb[0] - row_rgb[0]) ** 2
             + (target_rgb[1] - row_rgb[1]) ** 2
@@ -73,7 +91,7 @@ def main():
     writer.writerow(["Photo", "Timestamp", "Estimated Temperature (°)"])
 
     # Setup camera. Change camera_index if needed.
-    camera_index = 1
+    camera_index = 1  # Adjust as needed; often index 0 is the default camera.
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
         print(f"Cannot open camera at index {camera_index}")
@@ -91,14 +109,14 @@ def main():
             print("Can't receive frame. Exiting...")
             break
 
-        # Get frame height to place text in the bottom left corner.
+        # Get frame height to place text.
         height = frame.shape[0]
         current_time = time.time()
         elapsed_time = current_time - start_time
         overlay_text1 = f"Time Elapsed: {elapsed_time:.1f} s"
         overlay_text2 = f"Photos Captured: {img_counter}"
 
-        # Draw text in the bottom left corner with a smaller font.
+        # Draw overlay text.
         cv2.putText(
             frame,
             overlay_text1,
@@ -129,17 +147,28 @@ def main():
             photo_path = os.path.join(photos_dir, photo_filename)
             cv2.imwrite(photo_path, frame)
 
-            # Process the frame to estimate the temperature.
-            color_temp_map = extract_color_temp_map(frame, min_temp, max_temp)
-            estimated_temp = estimate_temperature(
-                frame, color_temp_map, x_target, y_target
-            )
-            timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                # Process the frame to estimate the temperature.
+                color_temp_map = extract_color_temp_map(frame, min_temp, max_temp)
+                estimated_temp = estimate_temperature(
+                    frame, color_temp_map, x_target, y_target
+                )
+            except ValueError as e:
+                print(f"Error processing image: {e}")
+                estimated_temp = None
 
-            print(
-                f"Captured {photo_filename} at {timestamp_str} with estimated temperature {estimated_temp:.2f}"
-            )
-            writer.writerow([photo_filename, timestamp_str, f"{estimated_temp:.2f}"])
+            timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if estimated_temp is not None:
+                print(
+                    f"Captured {photo_filename} at {timestamp_str} with estimated temperature {estimated_temp:.2f}"
+                )
+                writer.writerow(
+                    [photo_filename, timestamp_str, f"{estimated_temp:.2f}"]
+                )
+            else:
+                print(
+                    f"Captured {photo_filename} at {timestamp_str} but failed to estimate temperature."
+                )
 
             img_counter += 1
             last_capture_time = current_time
