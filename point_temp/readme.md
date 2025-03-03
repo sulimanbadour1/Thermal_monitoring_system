@@ -1,0 +1,1 @@
+This file is for extract the temp value from a defined (x,y) by the user.

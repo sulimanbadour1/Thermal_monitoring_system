@@ -1,0 +1,1 @@
+This file is about extracting the scale values from the photo,based on the color bar. 
